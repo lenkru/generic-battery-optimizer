@@ -1,0 +1,8 @@
+numpy<2
+pandas
+matplotlib
+pydantic>=2
+pyomo
+xlsxwriter
+pytest
+pytest-watch

@@ -1,0 +1,32 @@
+[build-system]
+requires = ["setuptools>=64", "setuptools_scm>=8"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools_scm]
+version_file = "src/battery_optimizer/_version.py"
+
+[project]
+name = "battery_optimizer"
+dynamic = ["version"]
+authors = [
+  { name="Carl Hauschke", email="hauschke@fzi.de" },
+    { name="Tobias Riedel", email="riedel@fzi.de" },
+]
+dependencies = [
+  "numpy < 2",
+  "pandas",
+  "matplotlib",
+  "pydantic >= 2",
+  "pyomo",
+  "xlsxwriter",
+  "pytest",
+  "pytest-watch",
+]
+description = "Generic Battery Optimizer"
+readme = "README.md"
+requires-python = ">=3.10"
+classifiers=[
+    "Intended Audience :: Science/Research",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3.10",
+]
