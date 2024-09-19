@@ -1,0 +1,32 @@
+image: python:3.11-slim
+
+stages:
+  - test
+  - build
+
+test:
+  stage: test
+  
+  script:
+    - apt-get update && apt-get install -y --no-install-recommends gcc g++ glpk-utils libglpk-dev && rm -rf /var/lib/apt/lists/*
+    - pip install -r requirements.txt
+    - pip install pytest-cov
+    - export PYTHONPATH=src
+    - pytest --cov-report term-missing --cov=src tests/
+
+build:
+  stage: build
+
+  only:
+    - tags
+    - master
+
+  variables:
+    GIT_DEPTH: 0
+
+  script:
+    - apt-get update && apt-get install -y --no-install-recommends git && rm -rf /var/lib/apt/lists/*
+    - pip install build twine
+    - python -m build
+    - TWINE_PASSWORD=${CI_JOB_TOKEN} TWINE_USERNAME=gitlab-ci-token python -m twine upload --repository-url ${CI_API_V4_URL}/projects/${CI_PROJECT_ID}/packages/pypi dist/*
+
