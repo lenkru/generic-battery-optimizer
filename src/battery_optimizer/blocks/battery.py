@@ -1,4 +1,3 @@
-import datetime
 import pyomo.environ as pyo
 # from battery_optimizer.blocks.base import Base
 from battery_optimizer.helpers.blocks import get_period_length

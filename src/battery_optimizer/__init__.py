@@ -79,3 +79,4 @@ def optimize(
         export.to_battery_soc(),
         export.to_fixed_consumption(),
         export.to_heat_pump_power(),
+    )
