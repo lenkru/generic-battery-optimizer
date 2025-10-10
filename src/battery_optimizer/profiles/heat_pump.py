@@ -1,7 +1,8 @@
 import datetime
 import secrets
-from typing import List, Optional
+from typing import List, Optional, Dict
 import pandas as pd
+import numpy as np
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -448,6 +449,37 @@ class HeatPump(BaseModel):
             "will be 0."
         ),
     )
+
+    cop_data: Optional[Dict[str, List[float]]] = Field(
+        default=None,
+        title="Custom COP data",
+        description=(
+            "Optional custom COP data for the heat pump. If provided, COP values "
+            "will be interpolated from this data instead of using hplib. "
+            "Must contain 'temp_sink', 'temp_source', and 'cop' as keys. "
+            "Temperatures should be in Celsius. "
+            "Example: {'temp_sink': [35, 35, 45, 45], 'temp_source': [7, -7, 7, -7], "
+            "'cop': [4.5, 2.9, 3.5, 2.7]}"
+        ),
+    )
+
+    @field_validator("cop_data")
+    def validate_cop_data(cls, v):
+        if v is None:
+            return v
+        # Check required keys
+        required_keys = {'temp_sink', 'temp_source', 'cop'}
+        if not required_keys.issubset(v.keys()):
+            raise ValueError(
+                f"cop_data must contain keys: {required_keys}"
+            )
+        # Check lengths match
+        lengths = [len(v[key]) for key in required_keys]
+        if len(set(lengths)) != 1:
+            raise ValueError(
+                "All arrays in cop_data must have the same length"
+            )
+        return v
 
     # Computed fields
     @computed_field

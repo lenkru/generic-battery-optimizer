@@ -8,6 +8,8 @@ from battery_optimizer.helpers.heat_pump_profile import (
 )
 from battery_optimizer.profiles.heat_pump import HeatPump
 import logging
+import numpy as np
+from scipy.interpolate import RegularGridInterpolator
 
 from battery_optimizer.static.heat_pump import C_TO_K
 from battery_optimizer.static.numbers import MAX_COP
@@ -19,23 +21,79 @@ class HeatPumpBlock:
     def __init__(self, index: pyo.Set, heat_pump: HeatPump):
         self.index = index
         self.heat_pump = heat_pump
+        self.cop_interpolator = None
 
-        # HPL Heat Pump
-        if heat_pump.type in ("Luft/Luft", "Air/Air"):
-            log.warning("L/L-WP")
-            raise NotImplementedError("Air/Air heat pumps are not supported.")
-        if heat_pump.type == "Generic":
-            parameters = hpl.get_parameters(
-                model=heat_pump.type,
-                group_id=heat_pump.id,
-                t_in=heat_pump.t_in - C_TO_K,
-                t_out=heat_pump.t_out - C_TO_K,
-                p_th=heat_pump.p_th / 1000,
-            )
-            self.hpl_heat_pump = hpl.HeatPump(parameters)
+        # Check if custom COP data is provided
+        if heat_pump.cop_data is not None:
+            log.info("Using custom COP data instead of hplib")
+            # Create interpolator from custom COP data
+            self._create_cop_interpolator()
+            self.hpl_heat_pump = None  # Not needed when using custom data
         else:
-            parameters = hpl.get_parameters(model=self.heat_pump.type)
-            self.hpl_heat_pump = hpl.HeatPump(parameters)
+            # HPL Heat Pump
+            if heat_pump.type in ("Luft/Luft", "Air/Air"):
+                log.warning("L/L-WP")
+                raise NotImplementedError("Air/Air heat pumps are not supported.")
+            if heat_pump.type == "Generic":
+                parameters = hpl.get_parameters(
+                    model=heat_pump.type,
+                    group_id=heat_pump.id,
+                    t_in=heat_pump.t_in - C_TO_K,
+                    t_out=heat_pump.t_out - C_TO_K,
+                    p_th=heat_pump.p_th / 1000,
+                )
+                self.hpl_heat_pump = hpl.HeatPump(parameters)
+            else:
+                parameters = hpl.get_parameters(model=self.heat_pump.type)
+                self.hpl_heat_pump = hpl.HeatPump(parameters)
+
+    def _create_cop_interpolator(self):
+        """Create RegularGridInterpolator from custom COP data"""
+        cop_data = self.heat_pump.cop_data
+        
+        # Get unique sink and source temperatures
+        temp_sink_unique = np.unique(cop_data['temp_sink'])
+        temp_source_unique = np.unique(cop_data['temp_source'])
+        
+        # Create matrix for COP values
+        cop_matrix = np.full((len(temp_sink_unique), len(temp_source_unique)), np.nan)
+        
+        # Populate matrix
+        for i in range(len(cop_data['temp_sink'])):
+            sink_idx = np.where(temp_sink_unique == cop_data['temp_sink'][i])[0][0]
+            source_idx = np.where(temp_source_unique == cop_data['temp_source'][i])[0][0]
+            cop_matrix[sink_idx, source_idx] = cop_data['cop'][i]
+        
+        # Create interpolator
+        self.cop_interpolator = RegularGridInterpolator(
+            (temp_sink_unique, temp_source_unique),
+            cop_matrix,
+            bounds_error=False,
+            fill_value=None,  # Extrapolate if needed
+        )
+        
+        log.info(f"COP interpolator created with {len(temp_sink_unique)} sink temps "
+                f"and {len(temp_source_unique)} source temps")
+
+    def _get_cop(self, t_source_c: float, t_sink_c: float) -> float:
+        """Get COP value either from interpolator or hplib"""
+        if self.cop_interpolator is not None:
+            # Use custom COP data interpolation
+            cop = self.cop_interpolator([t_sink_c, t_source_c])[0]
+            if np.isnan(cop):
+                log.warning(f"COP interpolation returned NaN for T_sink={t_sink_c}°C, "
+                          f"T_source={t_source_c}°C. Using fallback COP=2.5")
+                cop = 2.5
+            return float(cop)
+        else:
+            # Use hplib
+            result = self.hpl_heat_pump.simulate(
+                t_in_primary=t_source_c,
+                t_in_secondary=t_sink_c,
+                t_amb=-7,  # Standard ambient for rating
+                mode=1
+            )
+            return result["COP"]
 
     def build_block(self) -> pyo.Block:
         """Build the heat pump block"""
@@ -142,27 +200,19 @@ class HeatPumpBlock:
         )
 
         block.cop_high = pyo.Param(
-            initialize=self.hpl_heat_pump.simulate(
-                t_in_primary=(block.source_temp - C_TO_K),
-                t_in_secondary=(
-                    (self.heat_pump.output_temperature - 5) - C_TO_K
-                ),
-                t_amb=(block.outdoor_temperature - C_TO_K),
-                mode=1,
-            )["COP"],
+            initialize=self._get_cop(
+                t_source_c=(block.source_temp - C_TO_K),
+                t_sink_c=(self.heat_pump.output_temperature - 5) - C_TO_K,
+            ),
             doc=(
                 "The COP of the heat pump at the maximum output temperature."
             ),
         )
         block.cop_low = pyo.Param(
-            initialize=self.hpl_heat_pump.simulate(
-                t_in_primary=(block.source_temp - C_TO_K),
-                t_in_secondary=(
-                    (self.heat_pump.flow_temperature - 5) - C_TO_K
-                ),
-                t_amb=(block.outdoor_temperature - C_TO_K),
-                mode=1,
-            )["COP"],
+            initialize=self._get_cop(
+                t_source_c=(block.source_temp - C_TO_K),
+                t_sink_c=(self.heat_pump.flow_temperature - 5) - C_TO_K,
+            ),
             doc=("The COP of the heat pump at the flow output temperature."),
         )
 
