@@ -449,6 +449,47 @@ class HeatPump(BaseModel):
         ),
     )
 
+    cop_data: Optional[dict] = Field(
+        default=None,
+        title="Manufacturer COP data",
+        description=(
+            "Optional manufacturer COP data to fit custom hplib parameters. "
+            "This should be a dictionary with three keys: "
+            "'temp_source' (list of source temperatures in °C), "
+            "'temp_sink' (list of sink temperatures in °C), and "
+            "'cop' (list of COP values). "
+            "When provided, the optimizer will fit hplib COP parameters "
+            "(p1-p4) from this data using least-squares regression, creating "
+            "a more accurate model based on manufacturer specifications."
+        ),
+        examples=[
+            {
+                "temp_source": [7, 2, -7, 7, 2, -7],
+                "temp_sink": [35, 35, 35, 45, 45, 45],
+                "cop": [4.5, 4.0, 3.2, 3.5, 3.0, 2.5],
+            }
+        ],
+    )
+
+    @field_validator("cop_data")
+    def validate_cop_data(cls, v):
+        if v is None:
+            return v
+        required_keys = {"temp_source", "temp_sink", "cop"}
+        if not all(key in v for key in required_keys):
+            raise ValueError(
+                f"cop_data must contain all keys: {required_keys}"
+            )
+        if not (len(v["temp_source"]) == len(v["temp_sink"]) == len(v["cop"])):
+            raise ValueError(
+                "All lists in cop_data must have the same length"
+            )
+        if len(v["cop"]) < 4:
+            raise ValueError(
+                "cop_data must contain at least 4 data points for fitting"
+            )
+        return v
+
     # Computed fields
     @computed_field
     @property
