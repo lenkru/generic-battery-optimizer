@@ -85,6 +85,15 @@ class HeatPumpBlock:
                 == block.hp_block[i].price_sink
             ),
         )
+        # Ensure the top-level energy_sink has a positive UB so HP appears as a sink
+        for i in self.index:
+            period_length_hours = get_period_length(i, self.index)[1]
+            hp_ub_kw = getattr(self.heat_pump, "max_electric_power_hp", 0.0) or 0.0
+            hr_ub_kw = getattr(self.heat_pump, "max_electric_power_hr", 0.0) or 0.0
+            sink_ub_energy = (hp_ub_kw + hr_ub_kw) * 1000.0 * period_length_hours
+            if sink_ub_energy <= 0:
+                sink_ub_energy = 1e12
+            block.energy_sink[i].setub(sink_ub_energy)
         return block
 
     def get_block(self, block: pyo.Block):
