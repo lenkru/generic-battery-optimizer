@@ -2,6 +2,7 @@ import datetime
 import numpy as np
 import pandas as pd
 import logging
+from scipy.optimize import curve_fit
 
 log = logging.getLogger(__name__)
 
@@ -150,3 +151,104 @@ def interpolate_heat_energy(
     df[current_period] = None
     df.interpolate(method="time", inplace=True)
     return df[current_period]
+
+
+def fit_cop_parameters_from_manufacturer_data(cop_data: dict) -> dict:
+    """Fit hplib COP parameters (p1-p4) from manufacturer COP data.
+
+    This function uses least-squares regression to fit the hplib COP model
+    parameters from manufacturer COP data. The hplib COP equation is:
+    COP = p1 * T_source + p2 * T_sink + p3 + p4 * T_amb
+
+    where T_source and T_sink are temperatures in °C, and for Air/Water 
+    heat pumps, T_amb = T_source.
+
+    Arguments
+    ---------
+    cop_data : dict
+        Dictionary containing manufacturer COP data with keys:
+        - 'temp_source': list of source temperatures in °C
+        - 'temp_sink': list of sink temperatures in °C
+        - 'cop': list of COP values corresponding to the temperature pairs
+
+    Returns
+    -------
+    dict
+        Dictionary containing the fitted parameters:
+        - 'p1_COP [-]': float
+        - 'p2_COP [-]': float
+        - 'p3_COP [-]': float
+        - 'p4_COP [-]': float
+        - 'fit_rmse': Root mean square error of the fit
+        - 'fit_mape': Mean absolute percentage error of the fit
+
+    Raises
+    ------
+    ValueError
+        If cop_data doesn't contain the required keys or if fitting fails
+    """
+    required_keys = {'temp_source', 'temp_sink', 'cop'}
+    if not all(key in cop_data for key in required_keys):
+        raise ValueError(
+            f"cop_data must contain all keys: {required_keys}"
+        )
+
+    # Extract data
+    t_source = np.array(cop_data['temp_source'])
+    t_sink = np.array(cop_data['temp_sink'])
+    cop_values = np.array(cop_data['cop'])
+
+    if len(t_source) != len(t_sink) or len(t_source) != len(cop_values):
+        raise ValueError(
+            "All lists in cop_data must have the same length"
+        )
+
+    if len(cop_values) < 4:
+        raise ValueError(
+            "cop_data must contain at least 4 data points for fitting"
+        )
+
+    # hplib COP equation: COP = p1 * T_source + p2 * T_sink + p3 + p4 * T_amb
+    # For Air/Water heat pumps, T_amb = T_source
+    def hplib_cop_function(temps, p1, p2, p3, p4):
+        """hplib COP function for curve fitting"""
+        t_in, t_out = temps
+        t_amb = t_in  # For Air/Water heat pumps
+        return p1 * t_in + p2 * t_out + p3 + p4 * t_amb
+
+    try:
+        # Fit parameters using least-squares regression
+        popt, pcov = curve_fit(
+            hplib_cop_function,
+            (t_source, t_sink),
+            cop_values,
+            p0=[0.1, -0.1, 5.0, -0.1],  # initial guess
+            maxfev=10000
+        )
+
+        p1, p2, p3, p4 = popt
+
+        # Calculate fit quality metrics
+        cop_predicted = hplib_cop_function((t_source, t_sink), *popt)
+        rmse = float(np.sqrt(np.mean((cop_values - cop_predicted)**2)))
+        mape = float(np.mean(np.abs((cop_values - cop_predicted) / cop_values)) * 100)
+
+        log.info(
+            f"Fitted COP parameters from manufacturer data: "
+            f"p1={p1:.6f}, p2={p2:.6f}, p3={p3:.6f}, p4={p4:.6f} "
+            f"(RMSE={rmse:.4f}, MAPE={mape:.2f}%)"
+        )
+
+        return {
+            'p1_COP [-]': float(p1),
+            'p2_COP [-]': float(p2),
+            'p3_COP [-]': float(p3),
+            'p4_COP [-]': float(p4),
+            'fit_rmse': rmse,
+            'fit_mape': mape,
+        }
+
+    except Exception as e:
+        raise ValueError(
+            f"Failed to fit COP parameters from manufacturer data: {e}"
+        )

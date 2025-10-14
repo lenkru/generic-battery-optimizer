@@ -5,6 +5,7 @@ from battery_optimizer.helpers.heat_pump_profile import (
     heat_loss_tank,
     interpolate_temperature,
     interpolate_heat_energy,
+    fit_cop_parameters_from_manufacturer_data,
 )
 from battery_optimizer.profiles.heat_pump import HeatPump
 import logging
@@ -24,6 +25,8 @@ class HeatPumpBlock:
         if heat_pump.type in ("Luft/Luft", "Air/Air"):
             log.warning("L/L-WP")
             raise NotImplementedError("Air/Air heat pumps are not supported.")
+        
+        # Get base parameters
         if heat_pump.type == "Generic":
             parameters = hpl.get_parameters(
                 model=heat_pump.type,
@@ -32,10 +35,33 @@ class HeatPumpBlock:
                 t_out=heat_pump.t_out - C_TO_K,
                 p_th=heat_pump.p_th / 1000,
             )
-            self.hpl_heat_pump = hpl.HeatPump(parameters)
         else:
             parameters = hpl.get_parameters(model=self.heat_pump.type)
-            self.hpl_heat_pump = hpl.HeatPump(parameters)
+        
+        # If manufacturer COP data is provided, fit custom COP parameters
+        if heat_pump.cop_data is not None:
+            log.info(
+                f"Fitting COP parameters for heat pump '{heat_pump.name}' "
+                "from manufacturer data..."
+            )
+            fitted_params = fit_cop_parameters_from_manufacturer_data(
+                heat_pump.cop_data
+            )
+            
+            # Update the COP parameters in the hplib parameter DataFrame
+            parameters['p1_COP [-]'] = fitted_params['p1_COP [-]']
+            parameters['p2_COP [-]'] = fitted_params['p2_COP [-]']
+            parameters['p3_COP [-]'] = fitted_params['p3_COP [-]']
+            parameters['p4_COP [-]'] = fitted_params['p4_COP [-]']
+            
+            log.info(
+                f"Heat pump '{heat_pump.name}': Custom COP parameters fitted "
+                f"(RMSE={fitted_params['fit_rmse']:.4f}, "
+                f"MAPE={fitted_params['fit_mape']:.2f}%)"
+            )
+        
+        # Create hplib HeatPump object with (potentially customized) parameters
+        self.hpl_heat_pump = hpl.HeatPump(parameters)
 
     def build_block(self) -> pyo.Block:
         """Build the heat pump block"""
